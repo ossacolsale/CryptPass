@@ -1,0 +1,26 @@
+{
+  "name": "cryptpass",
+  "version": "0.0.7",
+  "description": "Simply encrypt passwords (on file)",
+  "main": "dist/crypt.js",
+  "types": "dist/crypt.d.ts",
+  "type": "commonjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "rm -rf ./dist && tsc",
+    "bundle": "browserify dist/crypt.js --standalone LibCryptPass -p esmify > dist/LibCryptPass.js"
+  },
+  "author": "Giancarlo Mangiagli",
+  "license": "ISC",
+  "dependencies": {
+    "browser-resolve": "^2.0.0",
+    "buffer": "^6.0.3",
+    "crypto-browserify": "^3.12.0",
+    "randombytes-pure": "^4.1.0",
+    "scrypt-js": "^3.0.1",
+    "stream-browserify": "^3.0.0"
+  },
+  "devDependencies": {
+    "esmify": "^2.1.1"
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "cryptpass",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Simply encrypt passwords (on file)",
   "main": "dist/crypt.js",
   "types": "dist/crypt.d.ts",

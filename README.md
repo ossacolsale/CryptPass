@@ -48,7 +48,7 @@ And you can find the resulting bundled js library on `dist/LibCryptPass.js`.
 
 ## Usage
 
-If you use TypeScript with the CryptPass bundled version, you can imjport the file `TypesForBundle.d.ts` that contains the most useful type definitions.
+If you use TypeScript with the CryptPass bundled version, you can import the file `TypesForBundle.d.ts` that contains the most useful type definitions.
 
 There are two main data structures that are managed by CryptPass: the `KeyPassObj` (where all credentials are stored) and the `SequenceObj` (where the secret sequence number is stored); they are simply two javascript objects.
 
@@ -165,37 +165,196 @@ interface EntryView extends EntryValue {
 ```
 
 
-### Sample code
+### Sample code (node.js)
 
 ```Typescript
 
-//first we define the object writers
+//suppose to have two custom methods for reading and writing text files
 
-const SequenceWriter = async (seq: {}): Promise<boolean> => {
-    return writeToAFile('pathToMySequenceFile.json',JSON.stringify(seq)); //for example I write it in a file
-}
+const writeToAFile = (filePath: string, fileContent: string): boolean => {
+    ///here your custom code that writes "fileContent" to "filePath"
+    ///and returns true on success or false on failure
+    return true;
+};
+
+const readFileContent = (filePath: string): string => {
+    ///here your custom code that reads the content of "filePath"
+    ///and returns that content as string
+    return 'file content...';
+};
+
+//define the object writers
 
 const KeyPassWriter = async (kp: {}): Promise<boolean> => {
-    return writeToAFile('pathToMyKeyPassFile.json',JSON.stringify(kp)); //for example I write it in a file
+    return writeToAFile('pathToMyKeyPassFile.json',JSON.stringify(kp)); //for example write it to a file (but you can write it to a database or to a variable etc.)
+};
+
+const SequenceWriter = async (seq: {}): Promise<boolean> => {
+    return writeToAFile('pathToMySequenceFile.json',JSON.stringify(seq)); //for example write it to a file (but you can write it to a database or to a variable etc.)
+};
+
+//define the Standard writer object
+
+const StandardW = {
+    SequenceWriter: SequenceWriter,
+    KeyPassWriter: KeyPassWriter
+};
+
+//declare a new ConfigCryptPass class
+
+const Config = new ConfigCryptPass(StandardW, {}, {});
+
+//initialize a new sequence and keypass
+
+await Config.initSeqAndKey('myVeryVery...ReallyStrongPassword');
+
+//declare a CryptPass class (in production put it inside try/catch block to handle wrong password error)
+
+const Cryptpass = new CryptPass('myVeryVery...ReallyStrongPassword', StandardW, JSON.parse(readFileContent('pathToMyKeyPassFile.json')), JSON.parse(readFileContent('pathToMySequenceFile.json')));
+
+//add an entry
+
+await CryptPass.addEntry({
+    Name: 'Bank account',
+    Description: 'My bank account on HSBC',
+    Tags: 'me, bank',
+    Username: '551238899',
+    Password: 'mySuperStrongBankreadyPassword?!?!?',
+    PIN: '999999',
+    Other: {
+        'Recovery answer': 'Mom'
+    }
+} as EntryView);
+
+//get all entry names
+
+console.log(CryptPass.getEntryNames());
+/*output:
+
+['Bank account']
+
+*/
+
+//get an entry
+console.log(CryptPass.getEntry('Bank account'));
+/*output:
+
+{
+    Name: 'Bank account',
+    Description: 'My bank account on HSBC',
+    Tags: 'me, bank',
+    Username: '551238899',
+    Password: 'mySuperStrongBank-readyPassword?!?!?',
+    PIN: '999999',
+    Other: {
+        'Recovery answer': 'Mom'
+    },
+    Date: Mon Jun 20 2022 17:00:31
 }
-
-
-//then we declare a new ConfigCryptPass class
-
-// if you use the node.js version:
-const Config = new ConfigCryptPass(StandardRnW, {}, {})
-// if you use the bundled version:
-const Config = new LibCryptPass.ConfigCryptPass(StandardRnW, {}, {})
-
-
-//then we initialize a new sequence and keypass
-
-
-Config.initSeqAndKey('myVeryVery...ReallyStrongPassword');
-
-
-//then we declare a CryptPass class
+*/
 
 ```
 
-to be completed...
+
+### Sample code (bundled pure javascript)
+
+```Typescript
+
+//suppose to have two custom methods for reading and writing text files
+
+const writeToAFile = (filePath: string, fileContent: string): boolean => {
+    ///here your custom code that writes "fileContent" to "filePath"
+    ///and returns true on success or false on failure
+    return true;
+};
+
+const readFileContent = (filePath: string): string => {
+    ///here your custom code that reads the content of "filePath"
+    ///and returns that content as string
+    return 'file content...';
+};
+
+//define the object writers
+
+const KeyPassWriter = async (kp: {}): Promise<boolean> => {
+    return writeToAFile('pathToMyKeyPassFile.json',JSON.stringify(kp)); //for example write it to a file (but you can write it to a database or to a variable etc.)
+};
+
+const SequenceWriter = async (seq: {}): Promise<boolean> => {
+    return writeToAFile('pathToMySequenceFile.json',JSON.stringify(seq)); //for example write it to a file (but you can write it to a database or to a variable etc.)
+};
+
+//define the Standard writer object
+
+const StandardW = {
+    SequenceWriter: SequenceWriter,
+    KeyPassWriter: KeyPassWriter
+};
+
+//declare a new ConfigCryptPass class
+
+const Config = new LibCryptPass.ConfigCryptPass(StandardW, {}, {});
+
+//initialize a new sequence and keypass
+
+await Config.initSeqAndKey('myVeryVery...ReallyStrongPassword');
+
+//declare a CryptPassCached class
+
+const Cryptpass = new LibCryptPass.CryptPassCached(StandardW, JSON.parse(readFileContent('pathToMyKeyPassFile.json')), JSON.parse(readFileContent('pathToMySequenceFile.json')));
+
+//get the master key
+
+const K = Cryptpass.GetK('myVeryVery...ReallyStrongPassword');
+
+//get the EntriesManage instance (in production put it inside try/catch block to handle wrong password error)
+
+const EM = Cryptpass.GetEntriesManage(K, true);
+
+//add an entry
+
+EM.AddEntry({
+    Name: 'Bank account',
+    Description: 'My bank account on HSBC',
+    Tags: 'me, bank',
+    Username: '551238899',
+    Password: 'mySuperStrongBankreadyPassword?!?!?',
+    PIN: '999999',
+    Other: {
+        'Recovery answer': 'Mom'
+    }
+} as EntryView);
+
+//save the changes! because you are managing credentials wallet externally, through EntriesManage class
+
+await Cryptpass.SetEntries(EM.Export(), K, true);
+
+//get all entry names
+
+console.log(EM.GetEntryNames());
+/*output:
+
+['Bank account']
+
+*/
+
+//get an entry
+console.log(EM.GetEntry('Bank account'));
+/*output:
+
+{
+    Name: 'Bank account',
+    Description: 'My bank account on HSBC',
+    Tags: 'me, bank',
+    Username: '551238899',
+    Password: 'mySuperStrongBank-readyPassword?!?!?',
+    PIN: '999999',
+    Other: {
+        'Recovery answer': 'Mom'
+    },
+    Date: Mon Jun 20 2022 17:00:31
+}
+*/
+
+
+```

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CryptPass — benchmark KDF browser</title>
+  <style>
+    body { max-width: 48rem; margin: 3rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; color: #202124; }
+    label, button { margin-right: .7rem; }
+    button { padding: .55rem .9rem; }
+    #status { min-height: 1.5em; }
+    table { border-collapse: collapse; margin-top: 1rem; }
+    th, td { border: 1px solid #bbb; padding: .4rem .7rem; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    .note { color: #555; }
+    #diagnostic { margin-top: 1rem; padding: .8rem; border: 1px solid #c66; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>Benchmark KDF CryptPass</h1>
+  <p>Misura scrypt nel browser con gli stessi parametri usati da CryptPass. Il calcolo gira in un Web Worker, quindi la pagina dovrebbe restare responsiva. Il benchmark usa solo una password e un salt fittizi.</p>
+  <p>
+    <label for="samples">Misure per configurazione</label>
+    <select id="samples"><option>3</option><option>1</option><option>5</option></select>
+    <button id="run">Avvia benchmark</button>
+  </p>
+  <p id="status" role="status" aria-live="polite">Pronto.</p>
+  <div id="results"></div>
+  <div id="diagnostic"></div>
+  <p class="note">La mediana aiuta a ridurre l’effetto di avvii e carico momentaneo. Esegui il test sui browser e dispositivi che vuoi supportare; lascia terminare ogni configurazione. N più alto aumenta la resistenza ai tentativi offline ma rallenta sblocco e salvataggi.</p>
+  <script>
+    const button = document.getElementById('run');
+    const status = document.getElementById('status');
+    const results = document.getElementById('results');
+    const diagnostic = document.getElementById('diagnostic');
+
+    function showDiagnostic(details, n, samples) {
+      const report = {
+        tool: 'CryptPass browser KDF benchmark',
+        time: new Date().toISOString(),
+        page: location.origin + location.pathname,
+        userAgent: navigator.userAgent,
+        platform: navigator.platform || null,
+        hardwareConcurrency: navigator.hardwareConcurrency || null,
+        deviceMemoryGiB: navigator.deviceMemory || null,
+        secureContext: window.isSecureContext,
+        workerUrl: '/dist/kdf-benchmark-worker.js',
+        kdf: { name: 'scrypt', N: n, r: 8, p: 1, samples },
+        error: details
+      };
+      window.__cryptPassKdfDiagnostic = report;
+      console.error('[CryptPass KDF benchmark] diagnostica', report);
+      console.info('Per copiare il report da Chrome DevTools: copy(window.__cryptPassKdfDiagnostic)');
+      diagnostic.replaceChildren();
+      const heading = document.createElement('p');
+      heading.textContent = 'Diagnostica registrata in console. Puoi copiarla con copy(window.__cryptPassKdfDiagnostic).';
+      const copyButton = document.createElement('button');
+      copyButton.textContent = 'Copia diagnostica';
+      copyButton.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+          copyButton.textContent = 'Copiata';
+        } catch (_) {
+          copyButton.textContent = 'Copia dalla console: copy(window.__cryptPassKdfDiagnostic)';
+        }
+      });
+      const detailsElement = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'Mostra i dettagli tecnici';
+      const pre = document.createElement('pre');
+      pre.textContent = JSON.stringify(report, null, 2);
+      detailsElement.append(summary, pre);
+      diagnostic.append(heading, copyButton, detailsElement);
+      return report;
+    }
+
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      results.replaceChildren();
+      diagnostic.replaceChildren();
+      delete window.__cryptPassKdfDiagnostic;
+      const samples = Number(document.getElementById('samples').value);
+      const table = document.createElement('table');
+      const head = document.createElement('tr');
+      ['scrypt', 'Mediana', 'Min', 'Max'].forEach(label => { const th = document.createElement('th'); th.textContent = label; head.appendChild(th); });
+      table.appendChild(head);
+      results.appendChild(table);
+      let currentN = null;
+      let currentPhase = 'create-worker';
+      try {
+        for (const n of [16384, 32768, 65536]) {
+          currentN = n;
+          currentPhase = 'create-worker';
+          const worker = new Worker('/dist/kdf-benchmark-worker.js');
+          const result = await new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (callback, value) => {
+              if (settled) return;
+              settled = true;
+              worker.terminate();
+              callback(value);
+            };
+            worker.onmessage = e => {
+              if (e.data.status) { status.textContent = e.data.status; currentPhase = e.data.phase || 'worker-running'; }
+              if (e.data.done) finish(resolve, e.data);
+              if (e.data.error) finish(reject, Object.assign(new Error(e.data.error.message || 'Errore nel Web Worker.'), { diagnostic: e.data.error }));
+            };
+            worker.onerror = e => {
+              e.preventDefault();
+              finish(reject, Object.assign(new Error(e.message || 'Errore durante il test nel Web Worker.'), { diagnostic: {
+                name: e.error && e.error.name || 'WorkerError', message: e.message || 'Il browser non ha fornito un messaggio.',
+                filename: e.filename || null, line: e.lineno || null, column: e.colno || null,
+                stack: e.error && e.error.stack || null, phase: currentPhase, n
+              } }));
+            };
+            worker.onmessageerror = () => finish(reject, Object.assign(new Error('Il browser non è riuscito a leggere il messaggio del Web Worker.'), { diagnostic: { name: 'WorkerMessageError', phase: currentPhase, n } }));
+            try { worker.postMessage({ n, samples }); }
+            catch (error) { finish(reject, Object.assign(error, { diagnostic: { name: error.name, message: error.message, phase: 'post-message', n } })); }
+          });
+          const row = document.createElement('tr');
+          [`N=${result.n}, r=${result.r}, p=${result.p}`, result.medianMs, result.minMs, result.maxMs].forEach((value, i) => {
+            const cell = document.createElement(i === 0 ? 'th' : 'td');
+            cell.textContent = i === 0 ? value : `${(value / 1000).toFixed(2)} s`;
+            row.appendChild(cell);
+          });
+          table.appendChild(row);
+        }
+        status.textContent = 'Test completato.';
+      } catch (error) {
+        status.textContent = error.message;
+        showDiagnostic(error.diagnostic || { name: error.name, message: error.message, phase: currentPhase, n: currentN }, currentN, samples);
+      } finally { button.disabled = false; }
+    });
+  </script>
+</body>
+</html>

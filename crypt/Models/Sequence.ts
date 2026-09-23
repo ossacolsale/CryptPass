@@ -12,12 +12,17 @@ export class Sequence extends GenericObj<sequence> {
         return this._Sequence;
     }
     public set Sequence(sequence: Array<number>) {
-        let right = true;
-        for (let num of sequence) {
-            if (typeof(num) !== 'number') { right = false; break }
+        if (!Sequence.IsValid(sequence)) throw new Error('Invalid sequence');
+        this._Sequence = sequence.slice();
+    }
+    public static IsValid(sequence: unknown): sequence is number[] {
+        if (!Array.isArray(sequence) || sequence.length !== 26) return false;
+        const seen = new Set<number>();
+        for (const n of sequence) {
+            if (!Number.isInteger(n) || n < 0 || n >= 26 || seen.has(n)) return false;
+            seen.add(n);
         }
-        if (right)
-            this._Sequence = sequence;
+        return seen.size === 26;
     }
 
 

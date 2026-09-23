@@ -1,10 +1,18 @@
-import randomBytes from "randombytes-pure";
+const randomBytes: (size: number) => Buffer = require("randombytes");
 
 
 export class cryptoXt {
 
+    public static RandomBytesGenerator: (n: number) => Buffer = (n: number) => randomBytes(n);
     public static secureMathRandom (): number {
-        return randomBytes(4).readUInt32LE() / 0xffffffff;
+        return this.RandomBytesGenerator(4).readUInt32LE() / 0x100000000;
+    }
+    private static randomInt(max: number): number {
+        const range = 0x100000000;
+        const limit = Math.floor(range / max) * max;
+        let value: number;
+        do { value = this.RandomBytesGenerator(4).readUInt32LE(); } while (value >= limit);
+        return value % max;
     }
 
     public static arrayShuffle<T> (array: Array<T>, minDistance: number = 4): Array<T> {
@@ -17,7 +25,7 @@ export class cryptoXt {
         
         while (true) {
             for (let index = array.length - 1; index > 0; index--) {
-                const newIndex = Math.floor(this.secureMathRandom() * (index + 1));
+                const newIndex = this.randomInt(index + 1);
                 [array[index], array[newIndex]] = [array[newIndex], array[index]];
             }
             if (this.arrayDistance(array, orig_array) >= minDistance && this.arrayDistance(array, reverse_array) >= minDistance)

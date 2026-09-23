@@ -21,7 +21,7 @@ export abstract class GenericObj<ObjectInterface> {
     protected abstract Save(): ObjectInterface;
 
     public async Export(KeepBackup?: boolean): Promise<boolean> {
-        return this._writer(this.Save(), KeepBackup);
+        return this._writer(this.Save() as {}, KeepBackup);
     }
 
     constructor (writer: ObjWriter, importObj?: {}) {

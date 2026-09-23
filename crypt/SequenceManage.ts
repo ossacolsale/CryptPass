@@ -28,7 +28,9 @@ export class SequenceManage {
     }
 
     public async RestoreSequence (sequence: Array<number>): Promise<boolean> {
-        this._Sequence.Sequence = sequence;
-        return this._Sequence.Export();
+        if (!Sequence.IsValid(sequence)) return false;
+        const previous = this._Sequence.Sequence.slice();
+        try { this._Sequence.Sequence = sequence; const saved = await this._Sequence.Export(); if (!saved) this._Sequence.Sequence = previous; return saved; }
+        catch (_) { this._Sequence.Sequence = previous; return false; }
     }
 }

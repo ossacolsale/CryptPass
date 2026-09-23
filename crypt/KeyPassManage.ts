@@ -50,134 +50,121 @@ ${de.bench + `(${de.res})`}
         return this._KeyPass.LastChange;
     }
 
-    public async InitializeKey (password: string, InitializeSeq: boolean = false): Promise<boolean> {
-        if (InitializeSeq) await this._SeqManage.Initialize();
-        const MasterKey = CommonSymEnc.GenerateRandomKey()+':'+CommonSymEnc.GenerateIV();
-        this._KeyPass.LastChange = new Date();
-        this._KeyPass.Salt = CommonSymEnc.GenerateSalt();
-        this._KeyPass.MasterKChunks = this.GetChunkedEncK(password, MasterKey);
-        this.setEntries(MasterKey, true);
-        return this._KeyPass.Export();
-    }
-
-    public set SeqManage (sm: SequenceManage) {
-        this._SeqManage = sm;
-    }
-
-    public get KeyPass(): KeyPass {
-        return this._KeyPass;
-    }
-
-    public async RefreshSequence (password: string): Promise<boolean> {
-        const K = this.GetK(password);
-        if (K !== false) {
-            await this._SeqManage.Initialize();
-            this._KeyPass.MasterKChunks = this.GetChunkedEncK(password, K);
-            return this._KeyPass.Export();
-        } else return false;
-    }
-
-    public BackupRecover (password: string): boolean {
-        ///TODO!
-        //tento di recuperare la PrK abbinando vecchio file con vecchia sequenza o nuovo file con vecchia sequenza o vecchio file con nuova sequenza
-        return true;
-    }
-    
-    public CheckPassword (password: string): boolean {
-        return this.GetK(password) !== false;
-    }
-
-    public async ChangePassword (oldPassword: string, newPassword: string): Promise<boolean> {
-        const K = this.GetK(oldPassword);
-        if (K !== false) {
-            this.getEntries(K, true);
-            //generate new MasterKey & Salt
-            const MasterKey = CommonSymEnc.GenerateRandomKey()+':'+CommonSymEnc.GenerateIV();
-            this._KeyPass.Salt = CommonSymEnc.GenerateSalt();
-            this._KeyPass.MasterKChunks = this.GetChunkedEncK(newPassword, MasterKey);
+    public async InitializeKey(password: string, InitializeSeq: boolean = false): Promise<boolean> {
+        if (!password) return false;
+        if (InitializeSeq && !(await this._SeqManage.Initialize())) return false;
+        const prev = { salt: this._KeyPass.Salt, chunks: this._KeyPass.MasterKChunks, version: this._KeyPass.FormatVersion, kdf: this._KeyPass.Kdf, entries: this._KeyPass.GetEntries() };
+        try {
+            const salt = CommonSymEnc.GenerateSalt();
+            const key = CommonSymEnc.GenerateRandomKey();
+            const encEntries = CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify({}), 'CryptPass:entries:v2');
+            const chunks = this.Chunk(this.EncryptMaster(password, salt, key));
+            this._KeyPass.Salt = salt; this._KeyPass.FormatVersion = 2;
+            this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams };
+            this._KeyPass.MasterKChunks = chunks;
             this._KeyPass.LastChange = new Date();
-            this.setEntries(MasterKey, true);
-            return this._KeyPass.Export();
-        }
-        else return false;
+            await this._KeyPass.SetEntries(JSON.stringify(encEntries));
+            if (await this._KeyPass.Export()) return true;
+        } catch (_) { /* restore the previous in-memory state */ }
+        if (prev.salt) this._KeyPass.Salt = prev.salt;
+        if (Array.isArray(prev.chunks) && prev.chunks.length === 26 && prev.chunks.every(c => typeof c === 'string' && c.length)) this._KeyPass.MasterKChunks = prev.chunks;
+        this._KeyPass.FormatVersion = prev.version; this._KeyPass.Kdf = prev.kdf;
+        await this._KeyPass.SetEntries(prev.entries);
+        return false;
     }
-
-    //given the assumption password already checked
-    public MasterEncrypt (passwordOrK: string, txt: string, isK: boolean = false): string {
-        const K = isK ? passwordOrK : this.GetK(passwordOrK);
-        if (K !== false) {
-            const SepMK = K.split(':');
-            return CommonSymEnc.SymEncrypt(SepMK[0],SepMK[1],txt);
-        } else return '';
-    }
-
-    //given the assumption password already checked
-    public MasterDecrypt (passwordOrK: string, txt: string, isK: boolean = false): string {
-        const K = isK ? passwordOrK : this.GetK(passwordOrK);
-        if (K !== false) {
-            const SepMK = K.split(':');
-            return CommonSymEnc.SymDecrypt(SepMK[0],SepMK[1],txt);
-        } else return '';
-    }
-
-    public SymEncrypt (password: string, PlainTxt: string) {
-        return CommonSymEnc.SymEncryptByPwd(password, this._KeyPass.Salt, PlainTxt);
-    }
-
-    public SymDecrypt (password: string, EncTxt: string) {
-        return CommonSymEnc.SymDecryptByPwd(password, this._KeyPass.Salt, EncTxt);
-    }
-
-    private GetChunkedEncK (password: string, Key: string): string[] {
+    public set SeqManage(sm: SequenceManage) { this._SeqManage = sm; }
+    public get KeyPass(): KeyPass { return this._KeyPass; }
+    public async RefreshSequence(password: string): Promise<boolean> {
+        const oldKey = this.GetK(password); if (oldKey === false) return false;
+        let entries: Entries;
+        try { entries = this.decryptEntries(oldKey); } catch (_) { return false; }
+        const previousSeq = this._SeqManage.Sequence.Sequence.slice();
+        const previous = { salt: this._KeyPass.Salt, chunks: this._KeyPass.MasterKChunks, version: this._KeyPass.FormatVersion, kdf: this._KeyPass.Kdf, data: this._KeyPass.GetEntries() };
         try {
-            const enc = this.SymEncrypt(password, Key);
-            
-            const chunkLen = Math.ceil(enc.length / this._SeqManage.NChunks);
-            const chunkedSeq = new Array<string>(this._SeqManage.NChunks);
-            for (let i=0; i<this._SeqManage.NChunks;++i) {
-                chunkedSeq[i] = enc.substring(
-                    this._SeqManage.Sequence.Sequence[i] * chunkLen,
-                    this._SeqManage.Sequence.Sequence[i] * chunkLen + chunkLen
-                )
-            }
-            return chunkedSeq;
-        } catch (e) {
-            console.log('GetChunkedEncK() error: ' + (e as Error).message);
-            return [];
-        }
+            if (!(await this._SeqManage.Initialize())) return false;
+            const salt = this._KeyPass.FormatVersion === 2 ? this._KeyPass.Salt : CommonSymEnc.GenerateSalt();
+            const key = this._KeyPass.FormatVersion === 2 ? oldKey : CommonSymEnc.GenerateRandomKey();
+            this._KeyPass.Salt = salt; this._KeyPass.FormatVersion = 2;
+            this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams };
+            this._KeyPass.MasterKChunks = this.Chunk(this.EncryptMaster(password, salt, key));
+            await this._KeyPass.SetEntries(JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify(entries), 'CryptPass:entries:v2')));
+            if (await this._KeyPass.Export()) return true;
+        } catch (_) { /* restore below */ }
+        await this._SeqManage.RestoreSequence(previousSeq);
+        this._KeyPass.Salt = previous.salt; this._KeyPass.MasterKChunks = previous.chunks; this._KeyPass.FormatVersion = previous.version; this._KeyPass.Kdf = previous.kdf; await this._KeyPass.SetEntries(previous.data);
+        return false;
     }
-
-    public GetK (password: string): string | false {
+    public BackupRecover(_password: string): boolean { return true; }
+    public CheckPassword(password: string): boolean { return this.GetK(password) !== false; }
+    public async ChangePassword(oldPassword: string, newPassword: string): Promise<boolean> {
+        if (!newPassword) return false;
+        const oldK = this.GetK(oldPassword); if (oldK === false) return false;
         try {
-            let encM: string = '';
-            const buildSeq = new Array<number>(this._SeqManage.NChunks);
-            for (let i=0; i<this._SeqManage.NChunks; ++i) {
-                buildSeq[this._SeqManage.Sequence.Sequence[i]] = i;
-            }
-            for (let i=0; i<this._SeqManage.NChunks; ++i) {
-                encM += this._KeyPass.MasterKChunks[ buildSeq[i] ];
-            }
-            const MK = this.SymDecrypt(password, encM);
-            //if (refreshIV) this.RefreshIV(password, MK);          
-            return MK;
-        } catch (e) {
-            console.log('GetK() error: ' + (e as Error).message);
+            const entries = this.decryptEntries(oldK);
+            const salt = CommonSymEnc.GenerateSalt(), key = CommonSymEnc.GenerateRandomKey();
+            const newChunks = this.Chunk(this.EncryptMaster(newPassword, salt, key));
+            const newEntries = JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify(entries), 'CryptPass:entries:v2'));
+            const previous = { salt: this._KeyPass.Salt, chunks: this._KeyPass.MasterKChunks, version: this._KeyPass.FormatVersion, kdf: this._KeyPass.Kdf, data: this._KeyPass.GetEntries() };
+            this._KeyPass.Salt = salt; this._KeyPass.MasterKChunks = newChunks; this._KeyPass.FormatVersion = 2;
+            this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams }; this._KeyPass.LastChange = new Date();
+            await this._KeyPass.SetEntries(newEntries);
+            if (await this._KeyPass.Export()) return true;
+            this._KeyPass.Salt = previous.salt; this._KeyPass.MasterKChunks = previous.chunks; this._KeyPass.FormatVersion = previous.version; this._KeyPass.Kdf = previous.kdf; await this._KeyPass.SetEntries(previous.data);
             return false;
-        }
+        } catch (_) { return false; }
     }
-    /*
-    private async RefreshIV (password: string, masterKey: string): Promise<boolean> {
-        this._KeyPass.IV = CommonSymEnc.GenerateIV();
-        this._KeyPass.MasterKChunks = this.GetChunkedEncK(password, masterKey);
-        return this._KeyPass.Export();
+    public MasterEncrypt(passwordOrK: string, txt: string, isK: boolean = false): string {
+        const key = isK ? passwordOrK : this.GetK(passwordOrK);
+        if (key === false) return '';
+        if (key.indexOf(':') >= 0) { const parts = key.split(':'); return JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(parts[0], 'utf8'), txt, 'CryptPass:entries:v2')); }
+        return JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), txt, 'CryptPass:entries:v2'));
     }
-    */
-//#endregion
-
-
-//#region pass manage:
-
-
+    public MasterDecrypt(passwordOrK: string, txt: string, isK: boolean = false): string {
+        const key = isK ? passwordOrK : this.GetK(passwordOrK);
+        if (key === false) throw new Error('Decryption failed');
+        if (key.indexOf(':') >= 0) { const parts = key.split(':'); return CommonSymEnc.LegacyDecrypt(parts[0], parts[1], txt); }
+        try { return CommonSymEnc.DecryptAead(Buffer.from(key, 'hex'), JSON.parse(txt), 'CryptPass:entries:v2'); } catch (_) { throw new Error('Decryption failed'); }
+    }
+    public SymEncrypt(password: string, plainText: string): string { return CommonSymEnc.EncryptWithPassword(password, this._KeyPass.Salt, plainText); }
+    public SymDecrypt(password: string, encText: string): string {
+        if (this._KeyPass.FormatVersion === 2) return CommonSymEnc.DecryptWithPassword(password, this._KeyPass.Salt, encText);
+        return CommonSymEnc.LegacyDecryptByPassword(password, this._KeyPass.Salt, encText);
+    }
+    private EncryptMaster(password: string, salt: string, key: string): string { return CommonSymEnc.EncryptWithPassword(password, salt, key); }
+    private Chunk(value: string): string[] {
+        const n = this._SeqManage.NChunks, chunks = new Array<string>(n);
+        if (value.length < n) throw new Error('Invalid encrypted payload');
+        for (let i=0;i<n;i++) chunks[this._SeqManage.Sequence.Sequence[i]] = value.substring(Math.floor(i*value.length/n), Math.floor((i+1)*value.length/n));
+        return chunks;
+    }
+    public GetK(password: string): string | false {
+        try {
+            const seq = this._SeqManage.Sequence.Sequence;
+            if (!Array.isArray(this._KeyPass.MasterKChunks) || this._KeyPass.MasterKChunks.length !== 26 || this._KeyPass.MasterKChunks.some(c => typeof c !== 'string' || !c.length)) return false;
+            const joined = new Array<string>(26);
+            if (this._KeyPass.FormatVersion === 2) {
+                for (let i=0;i<26;i++) { const part = this._KeyPass.MasterKChunks[seq[i]]; if (typeof part !== 'string') return false; joined[i] = part; }
+            } else {
+                const inverse = new Array<number>(26);
+                for (let i=0;i<26;i++) inverse[seq[i]] = i;
+                for (let i=0;i<26;i++) { const part = this._KeyPass.MasterKChunks[inverse[i]]; if (typeof part !== 'string') return false; joined[i] = part; }
+            }
+            const ciphertext = joined.join('');
+            if (this._KeyPass.FormatVersion === 2) {
+                const kdf = this._KeyPass.Kdf;
+                if (!kdf || kdf.name !== 'scrypt' || !Number.isInteger(kdf.N) || kdf.N < 16384 || kdf.N > 1048576 || !Number.isInteger(kdf.r) || kdf.r < 1 || kdf.r > 32 || !Number.isInteger(kdf.p) || kdf.p < 1 || kdf.p > 16) return false;
+                const key = CommonSymEnc.DecryptWithPassword(password, this._KeyPass.Salt, ciphertext, kdf);
+                if (!/^[0-9a-f]{64}$/i.test(key)) return false;
+                return key;
+            }
+            return CommonSymEnc.LegacyDecryptByPassword(password, this._KeyPass.Salt, ciphertext);
+        } catch (_) { return false; }
+    }
+    private decryptEntries(key: string): Entries {
+        const ciphertext = this._KeyPass.GetEntries();
+        if (key.indexOf(':') >= 0) return JSON.parse(this.MasterDecrypt(key, ciphertext, true)) as Entries;
+        return JSON.parse(this.MasterDecrypt(key, ciphertext, true)) as Entries;
+    }
 
     /* manage Entries externally: */
     
@@ -209,7 +196,17 @@ ${de.bench + `(${de.res})`}
     }
 
     protected async setEntries(passwordOrK: string, isK: boolean = false) {
-        this._KeyPass.SetEntries(this.MasterEncrypt(passwordOrK, JSON.stringify(this._EntriesManage.Export()),isK));
+        try {
+            if (this._KeyPass.FormatVersion !== 2 && !isK) {
+                const salt = CommonSymEnc.GenerateSalt(), key = CommonSymEnc.GenerateRandomKey();
+                this._KeyPass.Salt = salt; this._KeyPass.FormatVersion = 2;
+                this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams };
+                this._KeyPass.MasterKChunks = this.Chunk(this.EncryptMaster(passwordOrK, salt, key));
+                await this._KeyPass.SetEntries(JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify(this._EntriesManage.Export()), 'CryptPass:entries:v2')));
+                return;
+            }
+            await this._KeyPass.SetEntries(this.MasterEncrypt(passwordOrK, JSON.stringify(this._EntriesManage.Export()), isK));
+        } catch (_) { throw new Error('Vault update failed'); }
     }
 
     public GetEntryNames (password: string): string [] {

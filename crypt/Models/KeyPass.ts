@@ -9,7 +9,9 @@ export interface key {
     Salt: string,
     MasterKChunks: string[],
     //IV: string,
-    LastChange: string
+    LastChange: string,
+    FormatVersion?: number,
+    Kdf?: { name: string; N: number; r: number; p: number }
 }
 
 export interface pass {
@@ -24,7 +26,9 @@ export class KeyPass extends GenericObj<keypass>{
     private _Salt!: string;
     //private _IV!: string;
     private _LastChange!: Date;
-    private _MasterKChunks: string[] = new Array<string>();;
+    private _MasterKChunks: string[] = new Array<string>();
+    private _FormatVersion?: number;
+    private _Kdf?: { name: string; N: number; r: number; p: number };
 
     /*private _EntriesIV!: string;
     private _EntriesEncKey!: string;*/
@@ -41,13 +45,13 @@ export class KeyPass extends GenericObj<keypass>{
         return this._MasterKChunks;
     }
     public set MasterKChunks(chunks: Array<string>) {
-        let right = false;
-        for (let chun of chunks) {
-            if (chun.trim() != '') right = true;
-        }
-        if (right)
-            this._MasterKChunks = chunks;
+        if (!Array.isArray(chunks) || chunks.length !== 26 || chunks.some(c => typeof c !== 'string' || c.length === 0)) throw new Error('Invalid key data');
+        this._MasterKChunks = chunks.slice();
     }
+    public get FormatVersion(): number | undefined { return this._FormatVersion; }
+    public set FormatVersion(version: number | undefined) { this._FormatVersion = version; }
+    public get Kdf(): { name: string; N: number; r: number; p: number } | undefined { return this._Kdf; }
+    public set Kdf(value: { name: string; N: number; r: number; p: number } | undefined) { this._Kdf = value; }
 
     /*
     public get IV(): string {
@@ -88,9 +92,11 @@ export class KeyPass extends GenericObj<keypass>{
         if (this._Obj.Pass === undefined) this._Obj.Pass = { Description: '', Entries: '' };
         if (importObj !== undefined) {
             this._Salt = this._Obj.Key.Salt;
-            this._MasterKChunks = this._Obj.Key.MasterKChunks;
+            if (this._Obj.Key.MasterKChunks !== undefined) this.MasterKChunks = this._Obj.Key.MasterKChunks;
             //this._IV = this._Obj.Key.IV;
             this._LastChange = new Date(this._Obj.Key.LastChange);
+            this._FormatVersion = this._Obj.Key.FormatVersion;
+            this._Kdf = this._Obj.Key.Kdf;
             /*this._EntriesEncKey = this._Obj.Pass.EncKey;
             this._EntriesIV = this._Obj.Pass.IV;*/
         }
@@ -117,6 +123,8 @@ export class KeyPass extends GenericObj<keypass>{
     public Save(): keypass {
         this._Obj.Key.Salt = this._Salt;
         this._Obj.Key.MasterKChunks = this._MasterKChunks;
+        if (this._FormatVersion !== undefined) this._Obj.Key.FormatVersion = this._FormatVersion;
+        if (this._Kdf !== undefined) this._Obj.Key.Kdf = this._Kdf;
         //this._Obj.Key.IV = this._IV;
         this._Obj.Key.LastChange = this._LastChange.toISOString();
         /*this._Obj.Pass.EncKey = this.EntriesEncKey;

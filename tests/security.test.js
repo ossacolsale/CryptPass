@@ -68,19 +68,72 @@ const { cryptoXt } = require('../dist/Helpers/crypto-extensions');
   JSON.parse(orderedMaster());
   assert.strictEqual(await manager.AddEntry('correct horse battery', { Name: 'mail', Username: 'user', Password: 'secret' }), true);
   assert.strictEqual(manager.GetEntry('correct horse battery', 'mail').Password, 'secret');
+  const reopen = password => new KeyPassManage(
+    new KeyPass(() => true, JSON.parse(JSON.stringify(state))),
+    new SequenceManage(new Sequence(() => true, {Sequence: freshManage.Sequence.Sequence.slice()}))
+  );
+  assert.strictEqual(reopen('correct horse battery').GetEntry('correct horse battery', 'mail').Password, 'secret');
   const firstEntriesEnv = JSON.parse(kp.GetEntries());
   assert.strictEqual(await manager.UpdateEntry('correct horse battery', { Name: 'mail', Username: 'user', Password: 'new-secret' }), true);
   const secondEntriesEnv = JSON.parse(kp.GetEntries());
   assert.notStrictEqual(firstEntriesEnv.nonce, secondEntriesEnv.nonce);
-  await kp.SetEntries(JSON.stringify({ ...secondEntriesEnv, tag: '00'.repeat(16) }));
-  assert.throws(() => manager.GetEntry('correct horse battery', 'mail'), /Decryption failed/);
-  await kp.SetEntries(JSON.stringify(secondEntriesEnv));
+  assert.strictEqual(reopen('correct horse battery').GetEntry('correct horse battery', 'mail').Password, 'new-secret');
+  assert.strictEqual(await manager.UpdateEntryName('correct horse battery', 'mail', 'renamed'), true);
+  assert.strictEqual(reopen('correct horse battery').GetEntry('correct horse battery', 'renamed').Password, 'new-secret');
+  const renamedEntriesEnv = JSON.parse(kp.GetEntries());
+  await kp.SetEntries(JSON.stringify({ ...renamedEntriesEnv, tag: '00'.repeat(16) }));
+  assert.throws(() => manager.GetEntry('correct horse battery', 'renamed'), /Decryption failed/);
+  await kp.SetEntries(JSON.stringify(renamedEntriesEnv));
   assert.throws(() => CommonSymEnc.DecryptWithPassword('correct horse battery', kp.Salt, JSON.stringify({ ...JSON.parse(orderedMaster()), ciphertext: 'abc' })), /Decryption failed/);
   assert.strictEqual(await manager.ChangePassword('correct horse battery', 'new password'), true);
   assert.strictEqual(manager.CheckPassword('new password'), true);
-  assert.strictEqual(manager.GetEntry('new password', 'mail').Password, 'new-secret');
+  assert.strictEqual(manager.GetEntry('new password', 'renamed').Password, 'new-secret');
+  assert.strictEqual(reopen('new password').GetEntry('new password', 'renamed').Password, 'new-secret');
   assert.strictEqual(await manager.RefreshSequence('new password'), true);
-  assert.strictEqual(manager.GetEntry('new password', 'mail').Password, 'new-secret');
+  assert.strictEqual(manager.GetEntry('new password', 'renamed').Password, 'new-secret');
+  assert.strictEqual(reopen('new password').GetEntry('new password', 'renamed').Password, 'new-secret');
+  assert.strictEqual(await manager.DeleteEntry('new password', 'renamed'), true);
+  assert.strictEqual(reopen('new password').GetEntry('new password', 'renamed'), false);
+
+  // A single entry mutation must finish with exactly one completed persistence write.
+  let recordWrites = false;
+  const writes = [];
+  let activeWrites = 0, maxActiveWrites = 0, persistedAsyncVault, activeCaller = 'setup';
+  const asyncWriter = obj => {
+    if (!recordWrites) return true;
+    const payload = JSON.parse(JSON.stringify(obj));
+    const call = { number: writes.length + 1, timestamp: Date.now(), caller: activeCaller, payload, payloadHash: crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex'), completed: false };
+    writes.push(call);
+    activeWrites++;
+    maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+    return new Promise(resolve => setTimeout(() => {
+      call.completed = true;
+      call.completedAt = Date.now();
+      persistedAsyncVault = call.payload;
+      activeWrites--;
+      resolve(true);
+    }, writes.length === 1 ? 50 : 5));
+  };
+  const asyncSeq = new Sequence(() => true);
+  const asyncManagerSequence = new SequenceManage(asyncSeq);
+  const asyncKeyPass = new KeyPass(asyncWriter, {});
+  const asyncManager = new KeyPassManage(asyncKeyPass, asyncManagerSequence);
+  assert.strictEqual(await asyncManager.InitializeKey('async writer password', true), true);
+  recordWrites = true;
+  activeCaller = 'AddEntry';
+  assert.strictEqual(await asyncManager.AddEntry('async writer password', { Name: 'async', Password: 'first' }), true);
+  activeCaller = 'UpdateEntry';
+  assert.strictEqual(await asyncManager.UpdateEntry('async writer password', { Name: 'async', Password: 'updated' }), true);
+  await new Promise(resolve => setTimeout(resolve, 55));
+  assert.strictEqual(writes.length, 2, 'AddEntry and UpdateEntry should each invoke persistence exactly once');
+  assert.strictEqual(maxActiveWrites, 1, 'entry mutations should not overlap persistence writes');
+  assert(writes.every(write => write.completed && write.completedAt >= write.timestamp && /^[0-9a-f]{64}$/.test(write.payloadHash)));
+  assert.deepStrictEqual(writes.map(write => write.caller), ['AddEntry', 'UpdateEntry']);
+  const reopenedAsync = new KeyPassManage(
+    new KeyPass(() => true, persistedAsyncVault),
+    new SequenceManage(new Sequence(() => true, {Sequence: asyncManagerSequence.Sequence.Sequence.slice()}))
+  );
+  assert.strictEqual(reopenedAsync.GetEntry('async writer password', 'async').Password, 'updated');
 
   // A historical vault fixture: password-wrapped CBC master string and CBC entry payload.
   const legacySeq = Array.from({length:26}, (_,i)=>i);
@@ -99,5 +152,8 @@ const { cryptoXt } = require('../dist/Helpers/crypto-extensions');
   assert.strictEqual(legacyKeyPass.FormatVersion, 2);
   assert.strictEqual(legacyManager.GetEntry(legacyPassword, 'old').Password, 'legacy');
   assert.strictEqual(legacyManager.GetEntry(legacyPassword, 'new').Password, 'migrated');
+  const reopenedLegacy = new KeyPassManage(new KeyPass(() => true, legacyObject), new SequenceManage(new Sequence(() => true, {Sequence:legacySeq})));
+  assert.strictEqual(reopenedLegacy.GetEntry(legacyPassword, 'old').Password, 'legacy');
+  assert.strictEqual(reopenedLegacy.GetEntry(legacyPassword, 'new').Password, 'migrated');
   console.log('security tests passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });

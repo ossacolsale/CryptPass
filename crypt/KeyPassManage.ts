@@ -63,8 +63,7 @@ ${de.bench + `(${de.res})`}
             this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams };
             this._KeyPass.MasterKChunks = chunks;
             this._KeyPass.LastChange = new Date();
-            await this._KeyPass.SetEntries(JSON.stringify(encEntries));
-            if (await this._KeyPass.Export()) return true;
+            if (await this._KeyPass.SetEntries(JSON.stringify(encEntries))) return true;
         } catch (_) { /* restore the previous in-memory state */ }
         if (prev.salt) this._KeyPass.Salt = prev.salt;
         if (Array.isArray(prev.chunks) && prev.chunks.length === 26 && prev.chunks.every(c => typeof c === 'string' && c.length)) this._KeyPass.MasterKChunks = prev.chunks;
@@ -87,8 +86,7 @@ ${de.bench + `(${de.res})`}
             this._KeyPass.Salt = salt; this._KeyPass.FormatVersion = 2;
             this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams };
             this._KeyPass.MasterKChunks = this.Chunk(this.EncryptMaster(password, salt, key));
-            await this._KeyPass.SetEntries(JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify(entries), 'CryptPass:entries:v2')));
-            if (await this._KeyPass.Export()) return true;
+            if (await this._KeyPass.SetEntries(JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify(entries), 'CryptPass:entries:v2')))) return true;
         } catch (_) { /* restore below */ }
         await this._SeqManage.RestoreSequence(previousSeq);
         this._KeyPass.Salt = previous.salt; this._KeyPass.MasterKChunks = previous.chunks; this._KeyPass.FormatVersion = previous.version; this._KeyPass.Kdf = previous.kdf; await this._KeyPass.SetEntries(previous.data);
@@ -107,8 +105,7 @@ ${de.bench + `(${de.res})`}
             const previous = { salt: this._KeyPass.Salt, chunks: this._KeyPass.MasterKChunks, version: this._KeyPass.FormatVersion, kdf: this._KeyPass.Kdf, data: this._KeyPass.GetEntries() };
             this._KeyPass.Salt = salt; this._KeyPass.MasterKChunks = newChunks; this._KeyPass.FormatVersion = 2;
             this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams }; this._KeyPass.LastChange = new Date();
-            await this._KeyPass.SetEntries(newEntries);
-            if (await this._KeyPass.Export()) return true;
+            if (await this._KeyPass.SetEntries(newEntries)) return true;
             this._KeyPass.Salt = previous.salt; this._KeyPass.MasterKChunks = previous.chunks; this._KeyPass.FormatVersion = previous.version; this._KeyPass.Kdf = previous.kdf; await this._KeyPass.SetEntries(previous.data);
             return false;
         } catch (_) { return false; }
@@ -170,8 +167,7 @@ ${de.bench + `(${de.res})`}
     
     public async SetEntries(entries: Entries, password: string, isK: boolean = false): Promise<boolean> {
         this._EntriesManage.Entries = entries;
-        await this.setEntries(password, isK);
-        return this._KeyPass.Export();
+        return this.setEntries(password, isK);
     }
 
     public GetEntriesManage(password: string, isK: boolean = false): EntriesManage {
@@ -195,17 +191,16 @@ ${de.bench + `(${de.res})`}
         this._EntriesManage.Entries = JSON.parse(this.MasterDecrypt(passwordOrK, this._KeyPass.GetEntries(),isK)) as Entries;
     }
 
-    protected async setEntries(passwordOrK: string, isK: boolean = false) {
+    protected async setEntries(passwordOrK: string, isK: boolean = false): Promise<boolean> {
         try {
             if (this._KeyPass.FormatVersion !== 2 && !isK) {
                 const salt = CommonSymEnc.GenerateSalt(), key = CommonSymEnc.GenerateRandomKey();
                 this._KeyPass.Salt = salt; this._KeyPass.FormatVersion = 2;
                 this._KeyPass.Kdf = { name: 'scrypt', ...CommonSymEnc.KdfParams };
                 this._KeyPass.MasterKChunks = this.Chunk(this.EncryptMaster(passwordOrK, salt, key));
-                await this._KeyPass.SetEntries(JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify(this._EntriesManage.Export()), 'CryptPass:entries:v2')));
-                return;
+                return await this._KeyPass.SetEntries(JSON.stringify(CommonSymEnc.EncryptAead(Buffer.from(key, 'hex'), JSON.stringify(this._EntriesManage.Export()), 'CryptPass:entries:v2')));
             }
-            await this._KeyPass.SetEntries(this.MasterEncrypt(passwordOrK, JSON.stringify(this._EntriesManage.Export()), isK));
+            return await this._KeyPass.SetEntries(this.MasterEncrypt(passwordOrK, JSON.stringify(this._EntriesManage.Export()), isK));
         } catch (_) { throw new Error('Vault update failed'); }
     }
 
@@ -222,8 +217,7 @@ ${de.bench + `(${de.res})`}
     public async UpdateEntryName (password: string, Name: string, NewName: string): Promise<boolean> {
         this.getEntries(password);
         if (this._EntriesManage.UpdateEntryName(Name,NewName)) {
-            this.setEntries(password);
-            return this._KeyPass.Export();
+            return this.setEntries(password);
         }
         return false;
     }
@@ -231,8 +225,7 @@ ${de.bench + `(${de.res})`}
     public async UpdateEntry (password: string, Value: EntryView): Promise<boolean> {
         this.getEntries(password);
         if (this._EntriesManage.UpdateEntry(Value)) {
-            this.setEntries(password);
-            return this._KeyPass.Export();
+            return this.setEntries(password);
         }
         return false;
     }
@@ -240,8 +233,7 @@ ${de.bench + `(${de.res})`}
     public async DeleteEntry (password: string, Name: string): Promise<boolean> {
         this.getEntries(password);
         if (this._EntriesManage.DeleteEntry(Name)) {
-            this.setEntries(password);
-            return this._KeyPass.Export();
+            return this.setEntries(password);
         }
         return false;
     }
@@ -249,8 +241,7 @@ ${de.bench + `(${de.res})`}
     public async AddEntry (password: string, Value: EntryView): Promise<boolean> {
         this.getEntries(password);
         if (this._EntriesManage.AddEntry(Value)) {
-            this.setEntries(password);
-            return this._KeyPass.Export();
+            return this.setEntries(password);
         }
         return false;
     }

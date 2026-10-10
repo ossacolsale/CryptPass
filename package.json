@@ -12,7 +12,7 @@
     "benchmark:browser": "npm run build && npm run bundle && esbuild scripts/browser-kdf-benchmark-worker.js --bundle --platform=browser --format=iife --define:global=globalThis --inject:scripts/browser-globals.js --alias:stream=stream-browserify --alias:events=events --outfile=dist/kdf-benchmark-worker.js && node scripts/serve-browser-benchmark.js"
   },
   "author": "Giancarlo Mangiagli",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "browser-resolve": "^2.0.0",
     "browserify-aes": "^1.2.0",

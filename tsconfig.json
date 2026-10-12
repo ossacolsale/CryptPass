@@ -1,16 +1,18 @@
 {
     "compilerOptions": {
-      "module": "commonjs",
-      "moduleResolution": "Node",
+      "module": "Node16",
+      "moduleResolution": "Node16",
       "noImplicitAny": true,
       "removeComments": true,
       "preserveConstEnums": true,
       "sourceMap": true,
       "target": "ES6",
+      "rootDir": "crypt",
       "outDir": "dist",
       "allowSyntheticDefaultImports": true,
       "esModuleInterop": true,
       "declaration": true,
+      "types": ["node"],
       "strict": true,
       "lib": [
         "ES2015",

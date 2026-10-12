@@ -33,7 +33,7 @@ const { cryptoXt } = require('../dist/Helpers/crypto-extensions');
   const d1 = CommonSymEnc.DeriveKey('pāssword', salt);
   assert.strictEqual(d1.length, 32);
   assert.notDeepStrictEqual(d1, CommonSymEnc.DeriveKey('pāssword', '02'.repeat(16)));
-  assert.notDeepStrictEqual(d1, CommonSymEnc.DeriveKey('pāssword', salt, {N: 16384, r: 8, p: 1}));
+  assert.throws(() => CommonSymEnc.DeriveKey('pāssword', salt, {N: 16384, r: 8, p: 1}), /Invalid cryptographic input/);
   const legacySalt = '00112233445566778899aabbccddeeff';
   const legacyPassword = 'old-password';
   const legacyMaterial = Buffer.from(require('scrypt-js').syncScrypt(Buffer.from(legacyPassword.normalize('NFKC')), Buffer.from(legacySalt), 16384, 8, 1, 48)).toString('hex').slice(0,48);
@@ -64,6 +64,31 @@ const { cryptoXt } = require('../dist/Helpers/crypto-extensions');
   assert.strictEqual(manager.CheckPassword('correct horse battery'), true);
   const savedKdf = kp.Kdf; kp.Kdf = { name: 'unknown', N: 1, r: 8, p: 1 };
   assert.strictEqual(manager.CheckPassword('correct horse battery'), false); kp.Kdf = savedKdf;
+  // Rejected metadata must not reach scrypt, even for the largest previously accepted values.
+  const scryptModule = require('scrypt-js');
+  const originalSyncScrypt = scryptModule.syncScrypt;
+  let scryptCalls = 0;
+  scryptModule.syncScrypt = (...args) => { scryptCalls++; return originalSyncScrypt(...args); };
+  const rejectedProfiles = [
+    {N: 1048576, r: 32, p: 16}, // former maximum hostile profile (~4 GiB principal array)
+    {N: 16384, r: 8, p: 1}, {N: 131072, r: 8, p: 1},
+    {N: 65536, r: 1, p: 1}, {N: 65536, r: 9, p: 1},
+    {N: 65536, r: 8, p: 0}, {N: 65536, r: 8, p: 2},
+    {N: '65536', r: 8, p: 1}, {N: true, r: 8, p: 1},
+    {N: 65536.5, r: 8, p: 1}, {N: 65536, r: '8', p: 1},
+    {N: 65536, r: 8, p: false}, {N: 0, r: 8, p: 1},
+    {N: -65536, r: 8, p: 1}, null
+  ];
+  for (const profile of rejectedProfiles) {
+    kp.Kdf = { name: 'scrypt', ...profile };
+    assert.strictEqual(manager.CheckPassword('correct horse battery'), false);
+    assert.throws(() => CommonSymEnc.DeriveKey('correct horse battery', kp.Salt, profile), /Invalid cryptographic input/);
+  }
+  assert.strictEqual(scryptCalls, 0, 'invalid KDF profiles must be rejected before syncScrypt');
+  assert.strictEqual(CommonSymEnc.DeriveKey('correct horse battery', kp.Salt, {N: 65536, r: 8, p: 1}).length, 32);
+  assert.strictEqual(scryptCalls, 1, 'the syncScrypt spy must observe a valid profile');
+  scryptModule.syncScrypt = originalSyncScrypt;
+  kp.Kdf = savedKdf;
   const orderedMaster = () => freshManage.Sequence.Sequence.map(i => kp.MasterKChunks[i]).join('');
   JSON.parse(orderedMaster());
   assert.strictEqual(await manager.AddEntry('correct horse battery', { Name: 'mail', Username: 'user', Password: 'secret' }), true);

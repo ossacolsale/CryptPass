@@ -3,22 +3,37 @@ const { createCipheriv, createDecipheriv } = require("browserify-aes") as typeof
 const randomBytes: (size: number) => Buffer = require("randombytes");
 
 export interface AeadEnvelope { v: 2; alg: 'A256GCM'; nonce: string; ciphertext: string; tag: string; }
+export interface ScryptParams { N: number; r: number; p: number; }
 
 export class CommonSymEnc {
     public static readonly _EncAlg = 'aes-256-cbc'; // legacy reader only
     public static readonly _SymKeyLen = 48;
     public static readonly KdfParams = { N: 65536, r: 8, p: 1 };
+    /**
+     * V2 is capped at 64 MiB (128*N*r) and N*r*p = 524288; the legacy reader
+     * retains its fixed 16 MiB, N*r*p = 131072 profile. Exact profiles keep
+     * untrusted metadata from expanding either resource budget.
+     */
+    public static ValidateKdfParams(params: unknown, allowLegacy: boolean = false): params is ScryptParams {
+        if (params === null || typeof params !== 'object') return false;
+        const p = params as Record<string, unknown>;
+        if (!Number.isInteger(p.N) || !Number.isInteger(p.r) || !Number.isInteger(p.p)) return false;
+        const current = p.N === 65536 && p.r === 8 && p.p === 1;
+        const legacy = allowLegacy && p.N === 16384 && p.r === 8 && p.p === 1;
+        return current || legacy;
+    }
     public static RandomBytesGenerator: (NBytes: number) => Buffer = (n: number) => randomBytes(n);
     public static Scrypt: (Password: string, Salt: string, KeyLen: number) => Buffer = (Password, Salt, KeyLen) => {
         const password = Buffer.from(Password.normalize('NFKC'));
         const salt = Buffer.from(Salt.normalize('NFKC'));
         const p = this.KdfParams;
+        if (!this.ValidateKdfParams(p)) throw new Error('Invalid cryptographic input');
         return Buffer.from(syncScrypt(password, salt, p.N, p.r, p.p, KeyLen));
     };
     public static RandomKey(): Buffer { return this.RandomBytesGenerator(32); }
     public static RandomNonce(): Buffer { return this.RandomBytesGenerator(12); }
     public static DeriveKey(password: string, saltHex: string, params = this.KdfParams): Buffer {
-        if (!password || typeof password !== 'string' || !/^[0-9a-f]{32,128}$/i.test(saltHex)) throw new Error('Invalid cryptographic input');
+        if (!password || typeof password !== 'string' || typeof saltHex !== 'string' || !/^[0-9a-f]{32,128}$/i.test(saltHex) || !this.ValidateKdfParams(params)) throw new Error('Invalid cryptographic input');
         const normalized = Buffer.from(password.normalize('NFKC'));
         return Buffer.from(syncScrypt(normalized, Buffer.from(saltHex, 'hex'), params.N, params.r, params.p, 32));
     }
@@ -53,7 +68,9 @@ export class CommonSymEnc {
         return { key: d.substring(0, 32), iv: d.substring(32, 16) };
     }
     private static legacyScrypt(password: string, salt: string, len: number): Buffer {
-        return Buffer.from(syncScrypt(Buffer.from(password.normalize('NFKC')), Buffer.from(salt.normalize('NFKC')), 16384, 8, 1, len));
+        const params = { N: 16384, r: 8, p: 1 };
+        if (!this.ValidateKdfParams(params, true)) throw new Error('Invalid cryptographic input');
+        return Buffer.from(syncScrypt(Buffer.from(password.normalize('NFKC')), Buffer.from(salt.normalize('NFKC')), params.N, params.r, params.p, len));
     }
     public static LegacyDecryptByPassword(password: string, salt: string, cipherText: string): string {
         try { const k = this.LegacyGetEncKey(password, salt); const d = createDecipheriv('aes-256-cbc', k.key, k.iv); return d.update(cipherText, 'hex', 'utf8') + d.final('utf8'); }

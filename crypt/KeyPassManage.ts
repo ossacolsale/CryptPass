@@ -149,7 +149,7 @@ ${de.bench + `(${de.res})`}
             const ciphertext = joined.join('');
             if (this._KeyPass.FormatVersion === 2) {
                 const kdf = this._KeyPass.Kdf;
-                if (!kdf || kdf.name !== 'scrypt' || !Number.isInteger(kdf.N) || kdf.N < 16384 || kdf.N > 1048576 || !Number.isInteger(kdf.r) || kdf.r < 1 || kdf.r > 32 || !Number.isInteger(kdf.p) || kdf.p < 1 || kdf.p > 16) return false;
+                if (!kdf || kdf.name !== 'scrypt' || !CommonSymEnc.ValidateKdfParams(kdf)) return false;
                 const key = CommonSymEnc.DecryptWithPassword(password, this._KeyPass.Salt, ciphertext, kdf);
                 if (!/^[0-9a-f]{64}$/i.test(key)) return false;
                 return key;
